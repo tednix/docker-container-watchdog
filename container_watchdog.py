@@ -66,13 +66,25 @@ def get_container_health_status(container_object) -> str:
         health_status = 'nokey'
     return health_status
 
+def get_container_health_log(container_object) -> str:
+    try:
+        health_log = container_object.attrs['State']['Health']['Log'][-1]['Output']
+    except KeyError:
+        health_log = 'nokey'
+    except IndexError:
+        health_log = 'empty'
+    return health_log
 
 def restart_container(container_object) -> None:
     try:
         container_object.restart()
         logging.info("Restarted container: %s", container_object.name)
-        notification_content['text'] = ("[Container watchdog]: has *_restarted_* container: [ *_{0}_* ] which had healthstatus: [ _{1}_ ] and state:"
-                                        " [ _{2}_ ] on hostmachine [ _{3}_ ]".format(container_object.name, container_health_status, container_status, docker_host))
+        notification_content['text'] = ("[Container watchdog]: Container restarted\n"
+                                        "\tHost: [ *_{0}_* ]\n"
+                                        "\tContainer: [ *_{1}_* ]\n"
+                                        "\tState: [ *_{2}_* ]\n"
+                                        "\tHealthstatus: [ *_{3}_* ]\n"
+                                        "\tOutput: [ _{4}_ ]".format(docker_host, container_object.name, container_status, container_health_status, container_health_log))
         if container_object.short_id not in restarted_containers:
             restarted_containers.append(container_object.short_id)
     except Exception as err:
@@ -83,12 +95,16 @@ def restart_container(container_object) -> None:
 
 def container_recovered(container_object) -> None:
     logging.info("Container %s has recovered and is now healthy!", container_object.name)
-    notification_content['text'] = ("[Container watchdog]: Container: [ *_{0}_* ] has *recovered* with healthstatus: [ _{1}_ ] and state: [ _{2}_ ]"
-                                    " on hostmachine [ _{3}_ ]".format(container_object.name, container_health_status, container_status, docker_host))
+    notification_content['text'] = ("[Container watchdog]: Container has recovered\n"
+                                        "\tHost: [ *_{0}_* ]\n"
+                                        "\tContainer: [ *_{1}_* ]\n"
+                                        "\tState: [ *_{2}_* ]\n"
+                                        "\tHealthstatus: [ *_{3}_* ]".format(docker_host, container_object.name, container_status, container_health_status))
+
     restarted_containers.remove(container_object.short_id)
 
 
-# Run loop indefinetly polling every 30 seconds normally or in 15 minutes after watchdog has restarted a container.
+# Run loop indefinetly polling every $POLLING_INTERVAL normally or in $POLLING_INTERVAL_AFTER_RESTART after watchdog has restarted a container.
 while True:
     restart_status: bool = False
     container_list: list = CLIENT.containers.list()
@@ -103,8 +119,9 @@ while True:
             send_smtp_message(notification_content['text'])
         # If container is in unhealthy or exited status, restart and send Slack/Email notification.
         elif container_health_status == 'unhealthy':
-            logging.error("Found container in unhealthy state! Container: %s has health status: %s and container status: %s",
-                          container.name, container_health_status, container_status)
+            container_health_log: str = get_container_health_log(container)
+            logging.error("Found container in unhealthy state! Container: '%s' has health status: '%s' and container status: '%s' with output log: %s",
+                          container.name, container_health_status, container_status, container_health_log)
             restart_container(container)
             send_slack_message(notification_content)
             send_smtp_message(notification_content['text'])
