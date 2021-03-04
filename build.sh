@@ -1,2 +1,2 @@
 #!/bin/bash
-docker build -t docker-container-watchdog:latest .
+docker build --network=host -t docker-container-watchdog:latest .
